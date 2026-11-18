@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "定时发送",
+    "description": "把输入框里的内容排到便宜时段（12:00 / 18:00）或自定时刻，到点由 Host 调度投递到本会话。",
+    "detail": "docs/DETAIL.md"
+  }
+}

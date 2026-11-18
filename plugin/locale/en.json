@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Scheduled send",
+    "description": "Queue the composer draft for an off-peak window (12:00 / 18:00) or any later time; the Host delivers it into this session.",
+    "detail": "docs/DETAIL.md"
+  }
+}
