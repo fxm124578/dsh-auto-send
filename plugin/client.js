@@ -46,6 +46,7 @@ window.__ModuleLoader__.load({
         busy: false,
         error: '',
         notice: null,
+        syncedPrompt: null,
       };
     }
 
@@ -147,6 +148,8 @@ window.__ModuleLoader__.load({
     function pad2(n) { return (n < 10 ? '0' : '') + n; }
     function dateKey(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
     function timeKey(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+    // The Host's local-at selector requires HH:mm:ss (fraction optional); HH:mm is rejected as invalid_rule.
+    function timeKeyFull(d) { return timeKey(d) + ':' + pad2(d.getSeconds()); }
 
     function startOfDay(d) {
       const x = new Date(d.getTime());
@@ -374,7 +377,7 @@ window.__ModuleLoader__.load({
         label: formatWhen(wall),
         timing: {
           kind: 'at',
-          at: { date: dateKey(wall), time: timeKey(wall), time_zone: TIME_ZONE },
+          at: { date: dateKey(wall), time: timeKeyFull(wall), time_zone: TIME_ZONE },
         },
       };
     }
@@ -429,12 +432,38 @@ window.__ModuleLoader__.load({
 
       Promise.resolve(call).then(unwrap).then((value) => {
         const task = normalize(value) || null;
-        patch(sessionId, { busy: false, panelOpen: false, error: '', task: task });
+        patch(sessionId, { busy: false, panelOpen: false, error: '', task: task, syncedPrompt: null });
         flash(sessionId, { kind: 'ok', text: (existing ? '已改到：' : '已定时：') + (task && task.at ? formatWhen(task.at) : plan.label) });
         // The edit result may be a delete-shaped union member; trust the Host list then.
         refresh(sessionId);
       }).catch((error) => {
         patch(sessionId, { busy: false, error: error.message });
+      });
+    }
+
+    /**
+     * The Host sends its own stored copy of the text, not the composer's current
+     * contents. Keeping that copy equal to the draft after arming means a later
+     * edit in the input box needs no second press on the clock.
+     */
+    function syncPrompt(sessionId, text) {
+      const s = slotOf(sessionId);
+      const task = s.task;
+      if (!task || s.busy || !text) return;
+      if (task.prompt === text || s.syncedPrompt === text) return;
+      patch(sessionId, { syncedPrompt: text });
+      let call;
+      try {
+        call = scheduleApi().edit({ id: task.id, action: 'update', patch: { prompt: text } });
+      } catch (_) {
+        return;
+      }
+      Promise.resolve(call).then(unwrap).then(function (value) {
+        const next = normalize(value);
+        if (next) patch(sessionId, { task: next });
+      }).catch(function () {
+        // Keep the mark so a Host that keeps refusing is not retried on every keystroke.
+        patch(sessionId, { syncedPrompt: text });
       });
     }
 
@@ -448,7 +477,7 @@ window.__ModuleLoader__.load({
       try { call = scheduleApi().edit({ id: id, action: 'delete' }); }
       catch (error) { patch(sessionId, { busy: false, error: error.message }); return; }
       Promise.resolve(call).then(unwrap).then(() => {
-        patch(sessionId, { busy: false, task: null });
+        patch(sessionId, { busy: false, task: null, syncedPrompt: null });
         flash(sessionId, { kind: 'ok', text: '已取消这一条定时发送' });
       }).catch((error) => {
         patch(sessionId, { busy: false, error: error.message });
@@ -615,6 +644,21 @@ window.__ModuleLoader__.load({
       const s = useSlot(sessionId);
       const now = useNow(Boolean(s.task));
       const ready = typeof draft === 'string' ? draft.trim().length > 0 : true;
+      const liveText = typeof draft === 'string' ? draft.trim() : '';
+
+      // A reload must still show the armed pill (and feed the text sync below).
+      React.useEffect(function () {
+        if (sessionId && !s.loaded && !s.loading) refresh(sessionId);
+      }, [sessionId, s.loaded, s.loading]);
+
+      // Typing after arming keeps the pending task's text current (debounced), so
+      // the user edits once and never presses the clock a second time.
+      React.useEffect(function () {
+        if (!sessionId || !s.task || !liveText || s.busy) return undefined;
+        if (s.task.prompt === liveText || s.syncedPrompt === liveText) return undefined;
+        const timer = setTimeout(function () { syncPrompt(sessionId, liveText); }, 700);
+        return function () { clearTimeout(timer); };
+      }, [sessionId, liveText, s.task, s.syncedPrompt, s.busy]);
 
       if (!sessionId) return null;
 
@@ -777,8 +821,6 @@ window.__ModuleLoader__.load({
           )
         ),
 
-        text ? null : h('span', { style: ST.hint }, '输入框还是空的 —— 先在下面写下要发送的内容。'),
-
         // Expanding "自己定时" is the only thing that reveals the form.
         s.custom ? h('div', { style: ST.section },
           h('div', { style: ST.sectionRow },
@@ -840,7 +882,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'remote', 'remote.schedule'],
       apply(ctx) {
         HOST = ctx;
         try {

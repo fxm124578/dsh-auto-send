@@ -78,6 +78,12 @@ const ctx = {
     register: function (options, Component_) { return { options: options, Component: Component_ }; },
   },
 };
+// The Host service proxy throws `cannot get property "remote" without inject`,
+// so both names must be declared or every ctx.remote access dies at runtime.
+for (const name of ['remote', 'remote.schedule']) {
+  if ((mod.inject || []).indexOf(name) < 0) throw new Error('module must inject "' + name + '"');
+}
+
 mod.apply(ctx);
 
 const bySlot = {};
@@ -89,6 +95,11 @@ for (const item of registered) {
 
 // ---- render walk ----------------------------------------------------------
 const problems = [];
+// An empty draft must only surface the red error after a click; the gray
+// always-on duplicate line was removed on purpose.
+if (source.indexOf('先在下面写下要发送的内容') >= 0) problems.push('the gray empty-input hint is back');
+// Editing the draft after arming must keep the pending task's prompt current.
+if (source.indexOf('syncPrompt(sessionId, liveText)') < 0) problems.push('the draft-to-task text sync is gone');
 let nodes = 0;
 const texts = [];
 
@@ -386,6 +397,15 @@ ctx.remote.schedule = {
   click(primaryButton());
   await tick(30);
   const afterCustom = created.map(function (item) { return item.title; });
+
+  // the Host's local-at selector only accepts HH:mm:ss, never a bare HH:mm
+  created.forEach(function (item) {
+    const timing = item.timing || {};
+    const at = timing.at || {};
+    if (timing.kind !== 'at' || !/^\d{2}:\d{2}:\d{2}$/.test(String(at.time))) {
+      problems.push('timing.at.time must be HH:mm:ss, got ' + JSON.stringify(at.time));
+    }
+  });
 
   const summary = {
     file: path.basename(file),
