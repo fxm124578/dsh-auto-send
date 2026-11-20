@@ -21,7 +21,13 @@
 
 前提：DSH 桌面版，且自带 `dsh-schedule`（Host 调度服务）。插件目录是本仓库的 [`plugin/`](plugin)。
 
-**从 GitHub Release 装（推荐，预构建、免构建授权）**：
+**从 npm 装（推荐）**：
+
+```sh
+dsh plugin add dsh-auto-send
+```
+
+**从 GitHub Release 装（同一个预构建包，不经过 npm）**：
 
 ```sh
 dsh plugin add https://github.com/fxm124578/dsh-auto-send/releases/latest/download/dsh-auto-send.tgz
