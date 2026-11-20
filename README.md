@@ -4,6 +4,8 @@
 
 主要用途是**错峰**：把耗 token 的长任务排到便宜的计费时段（`12:00`、`18:00` 两个快按钮就是为这个准备的），你锁屏、切会话、把窗口丢到后台都不影响投递 —— 只要桌面应用还开着。
 
+![输入框旁的定时发送卡片](docs/preview.png)
+
 ## 特性
 
 - **输入框旁的时钟按钮**：鼠标移上去浮出小卡片预览（约 236px 宽，贴在时钟正上方、左边缘与时钟对齐；位置由按钮自身撑出来，不会飘到输入框外面），移开约 0.3 秒自动收；点一下则**固定悬浮**，再点一下收起，不弹窗、不跳页、不挤压输入框。
@@ -19,17 +21,21 @@
 
 前提：DSH 桌面版，且自带 `dsh-schedule`（Host 调度服务）。插件目录是本仓库的 [`plugin/`](plugin)。
 
-把仓库放到本地，然后在本仓库根目录打开 DSH 会话，让 agent 执行：
+**从 GitHub Release 装（推荐，预构建、免构建授权）**：
+
+```sh
+dsh plugin add https://github.com/fxm124578/dsh-auto-send/releases/latest/download/dsh-auto-send.tgz
+```
+
+**从源码装**：把仓库放到本地，在本仓库根目录打开 DSH 会话，让 agent 执行：
 
 ```
 plugin_manager  action: install_bundle  target: "<本仓库绝对路径>/plugin"
 ```
 
-例如 `C:/code/dsh-auto-send/plugin`，换成你自己的克隆位置即可。
+例如 `C:/code/dsh-auto-send/plugin`，换成你自己的克隆位置即可。也可以直接把 `plugin/` 目录拖进 DSH 的「插件」页安装。
 
 装完刷新页面（`Ctrl+R`）。输入框右下角、发送按钮左边会出现时钟图标。
-
-也可以直接把 `plugin/` 目录拖进 DSH 的「插件」页安装。
 
 ## 使用
 

@@ -1,9 +1,25 @@
 {
   "name": "dsh-auto-send",
-  "version": "1.3.2",
-  "private": true,
-  "type": "module",
+  "version": "1.3.3",
   "description": "Spot-send the composer draft later, off the peak-priced hours.",
+  "type": "module",
+  "license": "MIT",
+  "author": "fxm124578",
+  "homepage": "https://github.com/fxm124578/dsh-auto-send",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fxm124578/dsh-auto-send.git",
+    "directory": "plugin"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "schedule",
+    "delayed-send"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0 <0.3.0"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
