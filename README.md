@@ -120,6 +120,12 @@ node tests/smoke.js plugin/client.js
 
 输出 JSON（注册了哪些 slot、渲染出的按钮文案、点击后的建任务请求、`problems`）。`problems` 非空表示渲染树里有 undefined / NaN，退出码 2。
 
+## 作者
+
+由 [@fxm124578](https://github.com/fxm124578) 开发与维护 —— 问题、建议、PR 都走本仓库的 [Issues](https://github.com/fxm124578/dsh-auto-send/issues)。
+
+如果它在你的工作流里省下了时间，给仓库点个 ⭐ 就是最好的支持。
+
 ## License
 
 MIT
