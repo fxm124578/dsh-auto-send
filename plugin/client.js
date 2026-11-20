@@ -1,8 +1,11 @@
 // dsh-auto-send — composer-side scheduled send.
 //
-// Two slot occupants:
-//   conversation.input.right  -> the clock button (and the armed capsule)
-//   conversation.input.dock   -> the inline scheduling card, above the composer
+// One slot occupant:
+//   conversation.input.right  -> the clock button (the armed capsule) and the
+//                                small setting popover that hangs above it
+//
+// The popover is rendered from inside the button slot and positioned `fixed`
+// from the button's measured corner, so it never takes over the composer width.
 //
 // All actual delivery is done by the Host `dsh-schedule` service through the
 // client remote; this file holds no timer that matters across a page reload.
@@ -40,12 +43,13 @@ window.__ModuleLoader__.load({
         loaded: false,
         loading: false,
         panelOpen: false,
+        // Hover opens a preview that closes again on mouse-out; a click pins it.
+        pinned: false,
         day: 0,
         timeText: '',
         custom: false,
         busy: false,
         error: '',
-        notice: null,
         syncedPrompt: null,
       };
     }
@@ -69,18 +73,6 @@ window.__ModuleLoader__.load({
       if (!sessionId) return;
       Object.assign(slotOf(sessionId), next);
       notify();
-    }
-
-    let noticeToken = 0;
-
-    function flash(sessionId, notice) {
-      const token = ++noticeToken;
-      patch(sessionId, { notice });
-      setTimeout(() => {
-        if (token !== noticeToken) return;
-        const s = slotOf(sessionId);
-        if (s.notice === notice) patch(sessionId, { notice: null });
-      }, 8000);
     }
 
     function useSlot(sessionId) {
@@ -407,7 +399,7 @@ window.__ModuleLoader__.load({
       const plan = timingOf(target);
       const title = (TITLE_PREFIX + plan.label).slice(0, 120);
       const existing = s.task;
-      patch(sessionId, { busy: true, error: '', notice: null });
+      patch(sessionId, { busy: true, error: '' });
 
       let call;
       try {
@@ -432,8 +424,7 @@ window.__ModuleLoader__.load({
 
       Promise.resolve(call).then(unwrap).then((value) => {
         const task = normalize(value) || null;
-        patch(sessionId, { busy: false, panelOpen: false, error: '', task: task, syncedPrompt: null });
-        flash(sessionId, { kind: 'ok', text: (existing ? '已改到：' : '已定时：') + (task && task.at ? formatWhen(task.at) : plan.label) });
+        patch(sessionId, { busy: false, panelOpen: false, pinned: false, error: '', task: task, syncedPrompt: null });
         // The edit result may be a delete-shaped union member; trust the Host list then.
         refresh(sessionId);
       }).catch((error) => {
@@ -478,21 +469,34 @@ window.__ModuleLoader__.load({
       catch (error) { patch(sessionId, { busy: false, error: error.message }); return; }
       Promise.resolve(call).then(unwrap).then(() => {
         patch(sessionId, { busy: false, task: null, syncedPrompt: null });
-        flash(sessionId, { kind: 'ok', text: '已取消这一条定时发送' });
       }).catch((error) => {
         patch(sessionId, { busy: false, error: error.message });
       });
     }
 
+    // Hover preview: opens on mouse-enter, closes again on mouse-out.
     function openPanel(sessionId) {
       if (!sessionId) return;
       ensureDefaults(sessionId);
-      patch(sessionId, { panelOpen: true, custom: false, error: '', notice: null });
+      patch(sessionId, { panelOpen: true, pinned: false, custom: false, error: '' });
+      if (!slotOf(sessionId).loaded) refresh(sessionId);
+    }
+
+    // Click pins the card: it stays up after the pointer leaves, and the next
+    // click on the clock puts it away.
+    function pinPanel(sessionId) {
+      if (!sessionId) return;
+      ensureDefaults(sessionId);
+      if (slotOf(sessionId).panelOpen && slotOf(sessionId).pinned) {
+        closePanel(sessionId);
+        return;
+      }
+      patch(sessionId, { panelOpen: true, pinned: true, error: '' });
       if (!slotOf(sessionId).loaded) refresh(sessionId);
     }
 
     function closePanel(sessionId) {
-      patch(sessionId, { panelOpen: false, error: '' });
+      patch(sessionId, { panelOpen: false, pinned: false, error: '' });
     }
 
 
@@ -527,93 +531,92 @@ window.__ModuleLoader__.load({
         border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
         padding: '0 2px', fontSize: '13px', lineHeight: '1', opacity: '0.6',
       },
-      // The panel rides the composer's own width axis so it lines up with the
-      // input box the user is typing into, instead of hugging the pane edge.
-      card: {
-        boxSizing: 'border-box', width: '100%',
-        maxWidth: 'var(--dsh-composer-card-max-width, 720px)', margin: '0 auto 2px',
-        padding: '12px 14px', border: HAIRLINE, borderRadius: 'var(--dsw-radius-lg, 16px)',
-        background: SURFACE, boxShadow: SHADOW, color: 'inherit', font: 'inherit',
-        fontSize: 'var(--dsh-content-font-size, 13px)',
-        display: 'flex', flexDirection: 'column', gap: '10px',
+      // A compact popover hanging just above the clock button: this is one small
+      // setting, so it must not take over the composer's width or push the layout.
+      anchor: { display: 'inline-flex', alignItems: 'center', position: 'relative' },
+      // The layer is anchored by CSS to the button span (`left: 0`, just above it),
+      // so "directly above the clock" comes from the browser's own layout instead
+      // of a measured guess. The bridge and the tip live outside the scrolling card
+      // so the pointer can travel from the button into the card through that little
+      // triangle without the popover closing itself.
+      layer: {
+        position: 'absolute', left: '0', bottom: 'calc(100% + 8px)',
+        zIndex: '60', width: '236px', maxHeight: '55vh',
+        display: 'flex', flexDirection: 'column', pointerEvents: 'auto',
       },
-      head: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' },
-      headText: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '0' },
-      headActions: { display: 'flex', alignItems: 'center', gap: '8px' },
-      titleRow: { display: 'flex', alignItems: 'center', gap: '6px' },
-      titleGlyph: { display: 'flex', color: 'var(--as-accent, currentColor)' },
-      title: { fontWeight: '600' },
-      dots: { display: 'flex', alignItems: 'center', gap: '5px', padding: '0 2px' },
+      pop: {
+        boxSizing: 'border-box', width: '100%', padding: '8px 10px 9px',
+        border: HAIRLINE, borderRadius: '12px', background: SURFACE,
+        boxShadow: SHADOW, color: 'inherit', font: 'inherit', fontSize: '12px',
+        display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto',
+        pointerEvents: 'auto',
+      },
+      // A wide invisible corridor across the gap: the pointer can drift a little
+      // left or right on its way up from the clock and still count as "inside".
+      popBridge: { position: 'absolute', left: '-48px', right: '-48px', bottom: '-8px', height: '11px' },
+      popTip: {
+        position: 'absolute', bottom: '-6px', left: '8px', width: '0', height: '0',
+        borderLeft: '6px solid transparent', borderRight: '6px solid transparent',
+        borderTop: '6px solid ' + SURFACE,
+      },
+      popHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' },
+      popTitle: {
+        display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: '600',
+        color: 'var(--as-accent, currentColor)',
+      },
+      popRow: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' },
+      dots: { display: 'flex', alignItems: 'center', gap: '4px', padding: '0' },
       dot: {
-        width: '11px', height: '11px', padding: '0', borderRadius: '999px',
+        width: '9px', height: '9px', padding: '0', borderRadius: '999px',
         border: '1px solid var(--dsw-alias-border-l3, rgba(127,127,127,0.45))',
         background: 'currentColor', opacity: '0.35', cursor: 'pointer',
       },
       dotOn: { opacity: '1', boxShadow: '0 0 0 2px rgba(127,127,127,0.28)' },
-      hint: { color: CAPTION, fontSize: '12px', lineHeight: '1.4' },
+      hint: { color: CAPTION, fontSize: '11px', lineHeight: '1.45' },
       close: {
         border: 'none', background: 'transparent', color: MUTED, cursor: 'pointer',
-        fontSize: '13px', lineHeight: '1', padding: '3px 5px', borderRadius: '6px',
+        fontSize: '12px', lineHeight: '1', padding: '2px 4px', borderRadius: '6px',
       },
-      section: { display: 'flex', flexDirection: 'column', gap: '6px' },
-      sectionRow: {
-        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px',
-      },
-      sectionLabel: { fontSize: '12px', fontWeight: '600', opacity: '0.8' },
       quick: {
-        display: 'inline-flex', alignItems: 'baseline', gap: '4px',
-        padding: '4px 9px', border: '1px solid transparent', borderRadius: '8px',
+        display: 'inline-flex', alignItems: 'baseline', gap: '3px',
+        padding: '4px 8px', border: '1px solid transparent', borderRadius: '7px',
         background: 'var(--as-accent, var(--dsw-alias-brand-primary, #2b2f36))',
         color: 'var(--as-accent-ink, var(--dsw-alias-label-primary-inverted, #fff))',
         cursor: 'pointer', font: 'inherit',
       },
       quickOff: { opacity: '0.5', cursor: 'progress' },
       quickTime: {
-        fontSize: '12px', fontWeight: '600', fontVariantNumeric: 'tabular-nums',
+        fontSize: '11px', fontWeight: '600', fontVariantNumeric: 'tabular-nums',
         letterSpacing: '0.2px',
       },
-      quickDay: { fontSize: '11px', color: 'inherit', opacity: '0.6' },
+      quickDay: { fontSize: '10px', color: 'inherit', opacity: '0.6' },
       link: {
         border: 'none', background: 'transparent', color: MUTED, cursor: 'pointer',
-        font: 'inherit', fontSize: '12px', padding: '2px 0',
+        font: 'inherit', fontSize: '11px', padding: '2px 0',
         textDecoration: 'underline', textUnderlineOffset: '3px',
       },
-      customRow: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
+      customRow: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' },
       select: {
         boxSizing: 'border-box', border: HAIRLINE, background: 'transparent', color: 'inherit',
-        borderRadius: '8px', padding: '5px 6px', font: 'inherit', fontSize: '12px',
+        borderRadius: '7px', padding: '4px 4px', font: 'inherit', fontSize: '11px',
         cursor: 'pointer',
       },
       option: { background: 'var(--dsw-alias-bg-layer-2, #fff)', color: 'inherit' },
       fieldBad: { borderColor: 'rgba(217,83,79,0.7)' },
       field: {
         boxSizing: 'border-box', border: HAIRLINE, background: 'transparent', color: 'inherit',
-        borderRadius: '8px', padding: '4px 8px', font: 'inherit', fontSize: '13px',
-        fontVariantNumeric: 'tabular-nums', colorScheme: 'normal', width: '72px',
+        borderRadius: '7px', padding: '3px 6px', font: 'inherit', fontSize: '12px',
+        fontVariantNumeric: 'tabular-nums', colorScheme: 'normal', width: '62px',
       },
-      foot: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' },
-      actions: { display: 'flex', alignItems: 'center', gap: '6px' },
       primary: {
-        border: 'none', borderRadius: '10px', padding: '6px 14px', cursor: 'pointer',
+        border: 'none', borderRadius: '7px', padding: '4px 10px', cursor: 'pointer',
         background: 'var(--as-accent, var(--dsw-alias-brand-primary, #2b2f36))',
         color: 'var(--as-accent-ink, var(--dsw-alias-label-primary-inverted, #fff))',
-        font: 'inherit', fontSize: '12px', fontWeight: '600',
+        font: 'inherit', fontSize: '11px', fontWeight: '600',
         fontVariantNumeric: 'tabular-nums',
       },
       primaryOff: { opacity: '0.45', cursor: 'not-allowed' },
-      ghost: {
-        border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
-        font: 'inherit', fontSize: '12px', opacity: '0.7', padding: '4px 6px',
-      },
-      error: { color: '#d9534f', fontSize: '12px' },
-      ok: { color: MUTED, fontSize: '12px' },
-      noticeRow: {
-        boxSizing: 'border-box', width: '100%',
-        maxWidth: 'var(--dsh-composer-card-max-width, 720px)', margin: '0 auto 2px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
-        padding: '6px 12px', border: HAIRLINE, borderRadius: 'var(--dsw-radius-md, 12px)',
-        background: SURFACE, color: 'inherit', fontSize: '12px',
-      },
+      error: { color: '#d9534f', fontSize: '11px' },
     };
 
 
@@ -645,6 +648,22 @@ window.__ModuleLoader__.load({
       const now = useNow(Boolean(s.task));
       const ready = typeof draft === 'string' ? draft.trim().length > 0 : true;
       const liveText = typeof draft === 'string' ? draft.trim() : '';
+      const anchorRef = React.useRef(null);
+
+      // Hovering the clock opens the card; moving the pointer up to the card
+      // crosses the bridge and the tip, which stay inside this span, so the
+      // delayed close only fires when the pointer really leaves the group.
+      // Clicking pins the card so it stays put until clicked again.
+      const hoverTimer = React.useRef(null);
+      function cancelHoverClose() {
+        if (hoverTimer.current) {
+          clearTimeout(hoverTimer.current);
+          hoverTimer.current = null;
+        }
+      }
+      React.useEffect(function () {
+        return function () { cancelHoverClose(); };
+      }, []);
 
       // A reload must still show the armed pill (and feed the text sync below).
       React.useEffect(function () {
@@ -660,41 +679,202 @@ window.__ModuleLoader__.load({
         return function () { clearTimeout(timer); };
       }, [sessionId, liveText, s.task, s.syncedPrompt, s.busy]);
 
+      // The card is anchored by CSS to the button's own box (`left: 0`, just above
+      // it), so the browser — not a measured guess — decides where "above the
+      // clock" is. No JS positioning: the card can never drift away from the icon.
+      React.useEffect(function () {
+        if (!s.panelOpen) return undefined;
+        function onPointerDown(event) {
+          const root = anchorRef.current;
+          if (root && root.contains && root.contains(event.target)) return;
+          closePanel(sessionId);
+        }
+        function onKeyDown(event) {
+          if (event.key === 'Escape') closePanel(sessionId);
+        }
+        document.addEventListener('pointerdown', onPointerDown, true);
+        document.addEventListener('keydown', onKeyDown);
+        return function () {
+          document.removeEventListener('pointerdown', onPointerDown, true);
+          document.removeEventListener('keydown', onKeyDown);
+        };
+      }, [s.panelOpen, sessionId]);
+
       if (!sessionId) return null;
 
-      if (s.task) {
-        return h('div', { style: ST.pill, role: 'group', 'aria-label': '定时发送' },
-          h('button', {
+      const clock = s.task
+        ? h('div', { style: ST.pill, role: 'group', 'aria-label': '定时发送' },
+            h('button', {
+              type: 'button',
+              title: s.task.at ? '已定时 ' + formatWhen(s.task.at) : '已定时',
+              'aria-label': '定时发送',
+              'aria-expanded': s.panelOpen ? 'true' : 'false',
+              onClick: function () { pinPanel(sessionId); },
+              style: { display: 'inline-flex', alignItems: 'center', gap: '6px', border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', padding: '0', font: 'inherit', fontSize: '12px' },
+            },
+              h(Glyph, { size: 14 }),
+              h('span', { style: ST.pillText }, (s.task.at ? timeKey(s.task.at) : '定时') + ' · ' + formatCountdown(s.task, now))
+            ),
+            h('button', {
+              type: 'button',
+              title: '取消这条定时发送',
+              'aria-label': '取消定时发送',
+              disabled: s.busy,
+              onClick: function (event) { event.stopPropagation(); cancelTask(sessionId); },
+              style: ST.pillClose,
+            }, '✕')
+          )
+        : h('button', {
             type: 'button',
-            title: s.task.at ? '已定时 ' + formatWhen(s.task.at) : '已定时',
+            title: ready ? '定时发送这条消息' : '先写要发送的内容',
             'aria-label': '定时发送',
-            onClick: function () { openPanel(sessionId); },
-            style: { display: 'inline-flex', alignItems: 'center', gap: '6px', border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', padding: '0', font: 'inherit', fontSize: '12px' },
-          },
-            h(Glyph, { size: 14 }),
-            h('span', { style: ST.pillText }, (s.task.at ? timeKey(s.task.at) : '定时') + ' · ' + formatCountdown(s.task, now))
-          ),
+            'aria-expanded': s.panelOpen ? 'true' : 'false',
+            onClick: function () { pinPanel(sessionId); },
+            onMouseEnter: function (event) { event.currentTarget.style.opacity = '0.95'; event.currentTarget.style.background = 'rgba(127,127,127,0.14)'; },
+            onMouseLeave: function (event) { event.currentTarget.style.opacity = ''; event.currentTarget.style.background = 'transparent'; },
+            style: Object.assign({}, ST.iconButton, ready ? null : ST.iconButtonOff),
+          }, h(Glyph));
+
+      return h('span', {
+        ref: anchorRef,
+        style: ST.anchor,
+        onMouseEnter: function () {
+          if (!sessionId) return;
+          cancelHoverClose();
+          if (!slotOf(sessionId).panelOpen) openPanel(sessionId);
+        },
+        onMouseLeave: function () {
+          if (!sessionId) return;
+          cancelHoverClose();
+          hoverTimer.current = setTimeout(function () {
+            hoverTimer.current = null;
+            const current = slotOf(sessionId);
+            if (!current.panelOpen) return;
+            // A pinned card stays up until the clock is clicked again.
+            if (current.pinned) return;
+            // Keep it open while the user is typing in the clock form, and keep a
+            // red error on screen long enough to be read.
+            const active = typeof document !== 'undefined' ? document.activeElement : null;
+            const tag = active && active.tagName;
+            if (current.error) return;
+            if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+            closePanel(sessionId);
+          }, 300);
+        },
+      },
+        clock,
+        s.panelOpen
+          ? h(Card, { sessionId: sessionId, draft: draft })
+          : null
+      );
+    }
+
+    /** The small setting popover that hangs above the clock button. */
+    function Card(props) {
+      const sessionId = props.sessionId;
+      const draft = typeof props.draft === 'string' ? props.draft : '';
+      const s = useSlot(sessionId);
+      if (!sessionId) return null;
+
+      const text = draft.trim();
+      const slots = presetSlots();
+      const clock = parseTimeText(s.timeText);
+      const wall = plannedAt(sessionId, false);
+      const canConfirm = !!text && !!clock && !s.busy;
+
+      let when = '';
+      if (!s.timeText) when = '默认十分钟后，可以直接改写';
+      else if (!clock) when = '写成 12:30，或者直接写 1230、930';
+      else if (rollsOver(sessionId)) when = '今天这个时刻过了，会顺延到明天';
+      else if (wall) when = '将在 ' + formatWhen(wall) + ' 发出';
+
+      const daySelect = h('select', {
+        value: String(typeof s.day === 'number' ? s.day : 0),
+        'aria-label': '日期',
+        style: ST.select,
+        onChange: function (event) {
+          patch(sessionId, { day: Number(event.target.value), error: '' });
+        },
+      }, DAY_OPTIONS.map(function (offset) {
+        return h('option', { key: offset, value: String(offset), style: ST.option }, dayLabel(offset));
+      }));
+
+      const timeInput = h('input', {
+        type: 'text',
+        value: s.timeText || '',
+        placeholder: '12:30',
+        maxLength: 5,
+        inputMode: 'numeric',
+        'aria-label': '时间',
+        title: '手写时刻，12:30 / 1230 / 930 都认',
+        style: Object.assign({}, ST.field, clock ? null : ST.fieldBad),
+        onChange: function (event) { patch(sessionId, { timeText: event.target.value, error: '' }); },
+        onKeyDown: function (event) {
+          if (event.key === 'Enter' && canConfirm) submit(sessionId, draft);
+        },
+      });
+
+      return h('div', {
+        style: Object.assign({}, ST.layer, accentVars()),
+        role: 'dialog',
+        'aria-label': '定时发送设置',
+      },
+        h('div', { style: ST.popBridge }),
+        h('div', { style: ST.popTip }),
+        h('div', { style: ST.pop },
+        h('div', { style: ST.popHead },
+          h('span', { style: ST.popTitle }, h(Glyph, { size: 13 }), '定时发送'),
+          h('div', { style: ST.popRow },
+            h(ThemeDots, null),
+            h('button', {
+              type: 'button', style: ST.close, title: '收起', 'aria-label': '收起',
+              onClick: function () { closePanel(sessionId); },
+            }, '✕')
+          )
+        ),
+
+        h('span', { style: ST.hint },
+          s.task
+            ? '已有一条：' + (s.task.at ? formatWhen(s.task.at) : '定时中') + '，再设一次就是改期'
+            : '到点由 DSH 把这条消息发到当前会话'
+        ),
+
+        // Two cheap windows stay one press away; "自己定时" unfolds the clock form.
+        s.custom ? null : h('div', { style: ST.popRow },
+          slots.map(function (slot) {
+            return h(QuickSlot, {
+              key: slot.time,
+              slot: slot,
+              busy: s.busy,
+              onPick: function (picked) { submit(sessionId, draft, picked); },
+            });
+          }),
+          h('button', {
+            type: 'button', style: ST.link, title: '自己定时',
+            onClick: function () { patch(sessionId, { custom: true, error: '' }); },
+          }, '自己定时')
+        ),
+
+        s.custom ? h('div', { style: ST.popRow },
+          daySelect,
+          timeInput,
           h('button', {
             type: 'button',
-            title: '取消这条定时发送',
-            'aria-label': '取消定时发送',
-            disabled: s.busy,
-            onClick: function (event) { event.stopPropagation(); cancelTask(sessionId); },
-            style: ST.pillClose,
-          }, '✕')
-        );
-      }
+            disabled: !canConfirm,
+            title: text ? (clock ? '按这个时间发送' : '时间还没写对') : '输入框是空的',
+            onClick: function () { submit(sessionId, draft); },
+            style: Object.assign({}, ST.primary, !canConfirm ? ST.primaryOff : null),
+          }, s.busy ? '设定中…' : '定时发送'),
+          h('button', {
+            type: 'button', style: ST.link, title: '收起',
+            onClick: function () { patch(sessionId, { custom: false, error: '' }); },
+          }, '收起')
+        ) : null,
 
-      return h('button', {
-        type: 'button',
-        title: ready ? '定时发送这条消息' : '先写要发送的内容',
-        'aria-label': '定时发送',
-        'aria-expanded': s.panelOpen ? 'true' : 'false',
-        onClick: function () { openPanel(sessionId); },
-        onMouseEnter: function (event) { event.currentTarget.style.opacity = '0.95'; event.currentTarget.style.background = 'rgba(127,127,127,0.14)'; },
-        onMouseLeave: function (event) { event.currentTarget.style.opacity = ''; event.currentTarget.style.background = 'transparent'; },
-        style: Object.assign({}, ST.iconButton, ready ? null : ST.iconButtonOff),
-      }, h(Glyph));
+        s.custom ? h('span', { style: ST.hint }, when) : null,
+        s.error ? h('div', { style: ST.error, role: 'alert' }, s.error) : null
+        )
+      );
     }
 
     /** One of the two cheap windows: pressing it schedules immediately. */
@@ -738,134 +918,6 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function Panel(props) {
-      const zone = props && props.input ? props : null;
-      const sessionId = (zone && zone.session && zone.session.id) || props.sessionId || null;
-      const draft = zone && zone.input && typeof zone.input.draft === 'string' ? zone.input.draft : '';
-      const s = useSlot(sessionId);
-
-      React.useEffect(() => {
-        if (sessionId && !s.loaded && !s.loading) refresh(sessionId);
-      }, [sessionId, s.loaded, s.loading]);
-
-      if (!sessionId) return null;
-
-      if (!s.panelOpen) {
-        if (!s.notice) return null;
-        return h('div', { style: ST.noticeRow, role: 'status' },
-          h('span', { style: ST.ok }, '✓ ' + s.notice.text),
-          h('button', {
-            type: 'button', style: ST.ghost,
-            onClick: function () { patch(sessionId, { notice: null }); },
-          }, '知道了')
-        );
-      }
-
-      const text = draft.trim();
-      const slots = presetSlots();
-      const clock = parseTimeText(s.timeText);
-      const wall = plannedAt(sessionId, false);
-      const canConfirm = !!text && !!clock && !s.busy;
-
-      let when = '';
-      if (!s.timeText) when = '默认十分钟后，可以直接改写';
-      else if (!clock) when = '写成 12:30，或者直接写 1230、930';
-      else if (rollsOver(sessionId)) when = '今天这个时刻过了，会顺延到明天';
-      else if (wall) when = '将在 ' + formatWhen(wall) + ' 发出';
-
-      const daySelect = h('select', {
-        value: String(typeof s.day === 'number' ? s.day : 0),
-        'aria-label': '日期',
-        style: ST.select,
-        onChange: function (event) {
-          patch(sessionId, { day: Number(event.target.value), error: '' });
-        },
-      }, DAY_OPTIONS.map(function (offset) {
-        return h('option', { key: offset, value: String(offset), style: ST.option }, dayLabel(offset));
-      }));
-
-      const timeInput = h('input', {
-        type: 'text',
-        value: s.timeText || '',
-        placeholder: '12:30',
-        maxLength: 5,
-        inputMode: 'numeric',
-        'aria-label': '时间',
-        title: '手写时刻，12:30 / 1230 / 930 都认',
-        style: Object.assign({}, ST.field, clock ? null : ST.fieldBad),
-        onChange: function (event) { patch(sessionId, { timeText: event.target.value, error: '' }); },
-        onKeyDown: function (event) {
-          if (event.key === 'Enter' && canConfirm) submit(sessionId, draft);
-        },
-      });
-
-      return h('div', { style: Object.assign({}, ST.card, accentVars()), role: 'dialog', 'aria-label': '定时发送设置' },
-        h('div', { style: ST.head },
-          h('div', { style: ST.headText },
-            h('div', { style: ST.titleRow },
-              h('span', { style: ST.titleGlyph }, h(Glyph, { size: 14 })),
-              h('span', { style: ST.title }, '定时发送')
-            ),
-            h('span', { style: ST.hint },
-              s.task
-                ? '已有一条：' + (s.task.at ? formatWhen(s.task.at) : '定时中') + '，再设一次就是改期'
-                : '到点由 DSH 直接把这条消息发到当前会话'
-            )
-          ),
-          h('div', { style: ST.headActions },
-            h(ThemeDots, null),
-            h('button', {
-              type: 'button', style: ST.close, title: '收起', 'aria-label': '收起',
-              onClick: function () { closePanel(sessionId); },
-            }, '✕')
-          )
-        ),
-
-        // Expanding "自己定时" is the only thing that reveals the form.
-        s.custom ? h('div', { style: ST.section },
-          h('div', { style: ST.sectionRow },
-            h('span', { style: ST.sectionLabel }, '自己定'),
-            h('span', { style: ST.hint }, when)
-          ),
-          h('div', { style: ST.customRow }, daySelect, timeInput)
-        ) : null,
-
-        s.error ? h('div', { style: ST.error, role: 'alert' }, s.error) : null,
-        s.notice ? h('div', { style: ST.ok, role: 'status' }, '✓ ' + s.notice.text) : null,
-
-        // Bottom row is always the confirm area: two cheap windows, or the form's submit.
-        h('div', { style: ST.foot },
-          h('button', {
-            type: 'button',
-            style: ST.link,
-            title: s.custom ? '收起' : '自己定时',
-            onClick: function () { patch(sessionId, { custom: !s.custom, error: '' }); },
-          }, s.custom ? '收起' : '自己定时'),
-          h('div', { style: ST.actions },
-            s.custom
-              ? h('button', {
-                  type: 'button',
-                  disabled: !canConfirm,
-                  title: text ? (clock ? '按这个时间发送' : '时间还没写对') : '输入框是空的',
-                  onClick: function () { submit(sessionId, draft); },
-                  style: Object.assign({}, ST.primary, !canConfirm ? ST.primaryOff : null),
-                }, s.busy ? '正在设定…' : '定时发送')
-              : slots.map(function (slot) {
-                  return h(QuickSlot, {
-                    key: slot.time,
-                    slot: slot,
-                    busy: s.busy,
-                    onPick: function (picked) { submit(sessionId, draft, picked); },
-                  });
-                })
-          )
-        )
-      );
-    }
-
-
-
-
 
     // A broken render must not take the composer down with it.
     class Boundary extends React.Component {
@@ -895,12 +947,6 @@ window.__ModuleLoader__.load({
           return ctx.slots.register(
             { name: 'conversation.input.right', id: 'auto-send-button', order: 40, label: '定时发送' },
             guard(SendButton)
-          );
-        });
-        ctx.slots.inject('conversation.input.dock', function () {
-          return ctx.slots.register(
-            { name: 'conversation.input.dock', id: 'auto-send-panel', order: 40 },
-            guard(Panel)
           );
         });
       },

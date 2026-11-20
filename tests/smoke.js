@@ -100,6 +100,13 @@ const problems = [];
 if (source.indexOf('先在下面写下要发送的内容') >= 0) problems.push('the gray empty-input hint is back');
 // Editing the draft after arming must keep the pending task's prompt current.
 if (source.indexOf('syncPrompt(sessionId, liveText)') < 0) problems.push('the draft-to-task text sync is gone');
+// The wide dock card was replaced by a small popover above the clock button.
+if (source.indexOf('conversation.input.dock') >= 0) problems.push('the wide dock slot is still registered');
+// Hover-open must keep the button-to-card travel path; the bridge covers it.
+if (source.indexOf('popBridge') < 0) problems.push('the hover bridge under the popover is gone');
+if (source.indexOf('onMouseLeave') < 0) problems.push('the hover close handler is gone');
+// Clicking the clock must pin the card; a second click puts it away.
+if (source.indexOf('function pinPanel') < 0) problems.push('the click-to-pin mode is gone');
 let nodes = 0;
 const texts = [];
 
@@ -165,11 +172,13 @@ const baseProps = {
 };
 
 // 1. the compact button, with a draft present
-walk(bySlot['conversation.input.right'].Component(baseProps), 'button');
-// 2. the card is closed by default -> the dock renders nothing
-walk(bySlot['conversation.input.dock'].Component(baseProps), 'dock-closed');
-// 3. open the card by clicking the button path is covered by store tests below
-const before = nodes;
+const closedTree = bySlot['conversation.input.right'].Component(baseProps);
+walk(closedTree, 'button');
+if (findFirst(closedTree, function (node) { return node.props && node.props.role === 'dialog'; })) {
+  problems.push('the popover renders before any press');
+}
+// 2. the wide dock card is gone: the popover now lives inside the clock slot
+if (bySlot['conversation.input.dock']) problems.push('the dock card slot is back');
 
 // click the clock: find it by calling the component's props.onClick through the tree
 function clickFirst(node, predicate) {
@@ -190,9 +199,8 @@ function clickFirst(node, predicate) {
 const buttonTree = bySlot['conversation.input.right'].Component(baseProps);
 const clicked = clickFirst(buttonTree, function (node) { return node.type === 'button' && node.props && node.props['aria-label'] === '定时发送'; });
 
-// 4. the card, now open
-const dockTree = bySlot['conversation.input.dock'].Component(baseProps);
-walk(dockTree, 'dock-open');
+// 4. the popover, now open, still renders inside the clock slot
+walk(bySlot['conversation.input.right'].Component(baseProps), 'pop-open');
 
 // 4b. the five numbers: keyboard step, open drum, close drum
 function findFirst(node, predicate) {
@@ -216,12 +224,10 @@ function findFirst(node, predicate) {
 }
 
 // ---- helpers ---------------------------------------------------------------
-function findInDock(predicate) {
-  return findFirst(bySlot['conversation.input.dock'].Component(baseProps), predicate);
-}
-// ---- helpers ---------------------------------------------------------------
+// The popover is rendered by the clock button itself, so every helper below
+// looks inside that slot's tree (the external dock slot no longer exists).
 function renderDock() {
-  return bySlot['conversation.input.dock'].Component(baseProps);
+  return bySlot['conversation.input.right'].Component(baseProps);
 }
 
 function findInDock(predicate) {
@@ -343,22 +349,41 @@ ctx.remote.schedule = {
 };
 
 (async function main() {
-  // collapsed by default: two compact confirm buttons and the underlined link
-  const collapsed = {
+  // the card the click above opened: both cheap windows, the link, no form yet
+  const openState = {
     buttons: buttons().map(textOf),
     quick: quickButtons().map(function (node) {
       return { label: node.props['aria-label'], text: textOf(node) };
     }),
     link: linkButton() ? textOf(linkButton()) : null,
     hasForm: !!timeInput(),
+    hasDialog: !!findInDock(function (node) { return node.props && node.props.role === 'dialog'; }),
   };
+
+  // the click near the top of this file already opened the popover, so these
+  // numbers describe the open card; the closed state is checked by the walk.
+  const opened = {
+    quick: quickButtons().map(function (node) {
+      return { label: node.props['aria-label'], text: textOf(node) };
+    }),
+    link: textOf(linkButton()),
+    hasForm: !!timeInput(),
+  };
+
+  // a click pins the card; clicking the clock again puts it away
+  clickFirst(bySlot['conversation.input.right'].Component(baseProps), clockButton());
+  await tick(30);
+  const cardClosedBySecondClick = !findInDock(function (node) { return node.props && node.props.role === 'dialog'; });
+  // reopen it for the rest of the run
+  clickFirst(bySlot['conversation.input.right'].Component(baseProps), clockButton());
+  await tick(30);
 
   // pressing a cheap window schedules right away, no second step
   click(quickButtons()[0]);
   await tick(30);
   const afterQuick = created.map(function (item) { return { title: item.title, kind: item.timing && item.timing.kind }; });
 
-  // reopen and expand the underlined "自己定时"
+  // the pill replaces the icon; pressing it reopens the popover
   clickFirst(bySlot['conversation.input.right'].Component(baseProps), clockButton());
   await tick(30);
   const reopened = { hasForm: !!timeInput(), link: textOf(linkButton()) };
@@ -375,6 +400,8 @@ ctx.remote.schedule = {
   const themeInfo = {
     dots: dotButtons.map(function (node) { return node.props['aria-label']; }),
     autoAccent: cardStyle()['--as-accent'] || null,
+    width: cardStyle().width || null,
+    position: cardStyle().position || null,
     stored: (function () { try { return window.localStorage.getItem('dsh-auto-send.theme.v1'); } catch (_) { return 'no-storage'; } })(),
   };
   click(dotButtons[2]);
@@ -412,7 +439,9 @@ ctx.remote.schedule = {
     registered: registered.map(function (item) { return item.name; }),
     nodes: nodes,
     clickedClock: clicked,
-    collapsed: collapsed,
+    openState: openState,
+    opened: opened,
+    cardClosedBySecondClick: cardClosedBySecondClick,
     afterQuick: afterQuick,
     reopened: reopened,
     theme: themeInfo,
